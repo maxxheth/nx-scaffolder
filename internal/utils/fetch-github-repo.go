@@ -391,6 +391,170 @@ func replaceTemplateName(path, appName string) string {
 	return result
 }
 
+// ConfigureMonorepo configures the base Nx workspace for monorepo usage
+func ConfigureMonorepo(workspacePath, workspaceName string) error {
+	// Update package.json with workspace name
+	err := updatePackageJSON(workspacePath, workspaceName)
+	if err != nil {
+		return fmt.Errorf("failed to update package.json: %w", err)
+	}
+
+	// Update nx.json for monorepo configuration
+	err = updateNxJSONForMonorepo(filepath.Join(workspacePath, "nx.json"), []InjectionInstruction{})
+	if err != nil {
+		return fmt.Errorf("failed to update nx.json: %w", err)
+	}
+
+	return nil
+}
+
+// updateNxJSONForMonorepo updates nx.json for monorepo configuration
+func updateNxJSONForMonorepo(nxJSONPath string, instructions []InjectionInstruction) error {
+	for _, instruction := range instructions {
+		// Log instruction details
+
+		fmt.Printf("Processing instruction: Type=%s, AppName=%s", instruction.Type, instruction.AppName)
+	}
+
+	data, err := os.ReadFile(nxJSONPath)
+	if err != nil {
+		return err
+	}
+
+	var nxConfig map[string]interface{}
+	err = json.Unmarshal(data, &nxConfig)
+	if err != nil {
+		return err
+	}
+
+	// Configure for monorepo
+	nxConfig["npmScope"] = "monorepo"
+	nxConfig["affected"] = map[string]interface{}{
+		"defaultBase": "origin/main",
+	}
+
+	// Ensure React plugin is included
+	if nxConfig["plugins"] == nil {
+		nxConfig["plugins"] = []interface{}{}
+	}
+
+	plugins := nxConfig["plugins"].([]interface{})
+	hasReactPlugin := false
+	for _, plugin := range plugins {
+		if pluginStr, ok := plugin.(string); ok && strings.Contains(pluginStr, "react") {
+			hasReactPlugin = true
+			break
+		}
+	}
+
+	if !hasReactPlugin {
+		nxConfig["plugins"] = append(plugins, "@nx/react/plugin")
+	}
+
+	// Configure task runners
+	if nxConfig["tasksRunnerOptions"] == nil {
+		nxConfig["tasksRunnerOptions"] = map[string]interface{}{
+			"default": map[string]interface{}{
+				"runner": "@nx/workspace/tasks-runners/default",
+				"options": map[string]interface{}{
+					"cacheableOperations": []string{"build", "lint", "test", "e2e"},
+				},
+			},
+		}
+	}
+
+	// Write back to file
+	updatedData, err := json.MarshalIndent(nxConfig, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(nxJSONPath, updatedData, 0644)
+}
+
+// updateRootPackageJSON updates the root package.json for the monorepo
+func updateRootPackageJSON(packageJSONPath string, instructions []InjectionInstruction) error {
+	data, err := os.ReadFile(packageJSONPath)
+	if err != nil {
+		return err
+	}
+
+	var packageJSON map[string]interface{}
+	err = json.Unmarshal(data, &packageJSON)
+	if err != nil {
+		return err
+	}
+
+	// Add scripts for all apps
+	if packageJSON["scripts"] == nil {
+		packageJSON["scripts"] = make(map[string]interface{})
+	}
+
+	scripts := packageJSON["scripts"].(map[string]interface{})
+
+	// Add common scripts
+	scripts["start"] = "nx serve"
+	scripts["build"] = "nx build"
+	scripts["test"] = "nx test"
+	scripts["lint"] = "nx lint"
+	scripts["affected:apps"] = "nx affected:apps"
+	scripts["affected:libs"] = "nx affected:libs"
+	scripts["affected:build"] = "nx affected:build"
+	scripts["affected:test"] = "nx affected:test"
+
+	// Add app-specific scripts
+	for _, instruction := range instructions {
+		appName := instruction.AppName
+		scripts[fmt.Sprintf("start:%s", appName)] = fmt.Sprintf("nx serve %s", appName)
+		scripts[fmt.Sprintf("build:%s", appName)] = fmt.Sprintf("nx build %s", appName)
+		scripts[fmt.Sprintf("test:%s", appName)] = fmt.Sprintf("nx test %s", appName)
+	}
+
+	// Write back to file
+	updatedData, err := json.MarshalIndent(packageJSON, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(packageJSONPath, updatedData, 0644)
+}
+
+// updateImportedPackageJSON updates package.json for imported apps
+func updateImportedPackageJSON(packageJSONPath, appName string) error {
+	data, err := os.ReadFile(packageJSONPath)
+	if err != nil {
+		return err
+	}
+
+	var packageJSON map[string]interface{}
+	err = json.Unmarshal(data, &packageJSON)
+	if err != nil {
+		return err
+	}
+
+	// Update name
+	packageJSON["name"] = appName
+
+	// Remove conflicting scripts
+	if scripts, exists := packageJSON["scripts"]; exists {
+		if scriptsMap, ok := scripts.(map[string]interface{}); ok {
+			// Remove scripts that might conflict with Nx
+			delete(scriptsMap, "start")
+			delete(scriptsMap, "build")
+			delete(scriptsMap, "test")
+			delete(scriptsMap, "eject")
+		}
+	}
+
+	// Write back to file
+	updatedData, err := json.MarshalIndent(packageJSON, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(packageJSONPath, updatedData, 0644)
+}
+
 // Example usage:
 // func main() {
 // 	ctx := context.Background()
