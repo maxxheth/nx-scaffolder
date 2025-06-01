@@ -111,10 +111,27 @@ func extractFile(file *zip.File, destPath string) error {
 	// Create the destination file path
 	destFilePath := filepath.Join(destPath, file.Name)
 
+	// Skip if this is a directory entry
+	if file.FileInfo().IsDir() {
+		return os.MkdirAll(destFilePath, 0755)
+	}
+
+	// Get the directory for the file
+	destDir := filepath.Dir(destFilePath)
+
+	// Check if there's a file blocking the directory creation
+	if info, err := os.Stat(destDir); err == nil && !info.IsDir() {
+		// Remove the blocking file
+		err = os.Remove(destDir)
+		if err != nil {
+			return fmt.Errorf("failed to remove blocking file %s: %w", destDir, err)
+		}
+	}
+
 	// Ensure the directory exists
-	err = os.MkdirAll(filepath.Dir(destFilePath), 0755)
+	err = os.MkdirAll(destDir, 0755)
 	if err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
+		return fmt.Errorf("failed to create directory %s: %w", destDir, err)
 	}
 
 	// Create the destination file
@@ -393,6 +410,16 @@ func replaceTemplateName(path, appName string) string {
 
 // ConfigureMonorepo configures the base Nx workspace for monorepo usage
 func ConfigureMonorepo(workspacePath, workspaceName string) error {
+	// Check if package.json exists, if not create it with npm init
+	packageJSONPath := filepath.Join(workspacePath, "package.json")
+	if _, err := os.Stat(packageJSONPath); os.IsNotExist(err) {
+		fmt.Printf("No package.json found, initializing new Node.js project...\n")
+		err = initializeNodeProject(workspacePath, workspaceName)
+		if err != nil {
+			return fmt.Errorf("failed to initialize Node.js project: %w", err)
+		}
+	}
+
 	// Update package.json with workspace name
 	err := updatePackageJSON(workspacePath, workspaceName)
 	if err != nil {
@@ -553,6 +580,91 @@ func updateImportedPackageJSON(packageJSONPath, appName string) error {
 	}
 
 	return os.WriteFile(packageJSONPath, updatedData, 0644)
+}
+
+// initializeNodeProject creates a basic package.json file for the workspace
+func initializeNodeProject(workspacePath, workspaceName string) error {
+	// Create a basic package.json structure
+	packageJSON := map[string]interface{}{
+		"name":    workspaceName,
+		"version": "0.0.0",
+		"license": "MIT",
+		"scripts": map[string]interface{}{},
+		"private": true,
+		"devDependencies": map[string]interface{}{
+			"nx":            "latest",
+			"@nx/workspace": "latest",
+		},
+		"workspaces": []string{
+			"apps/*",
+			"libs/*",
+		},
+	}
+
+	// Write package.json
+	packageJSONPath := filepath.Join(workspacePath, "package.json")
+	data, err := json.MarshalIndent(packageJSON, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal package.json: %w", err)
+	}
+
+	err = os.WriteFile(packageJSONPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write package.json: %w", err)
+	}
+
+	// Create nx.json if it doesn't exist
+	nxJSONPath := filepath.Join(workspacePath, "nx.json")
+	if _, err := os.Stat(nxJSONPath); os.IsNotExist(err) {
+		nxConfig := map[string]interface{}{
+			"$schema":  "./node_modules/nx/schemas/nx-schema.json",
+			"npmScope": workspaceName,
+			"affected": map[string]interface{}{
+				"defaultBase": "origin/main",
+			},
+			"plugins": []interface{}{
+				"@nx/react/plugin",
+			},
+			"tasksRunnerOptions": map[string]interface{}{
+				"default": map[string]interface{}{
+					"runner": "@nx/workspace/tasks-runners/default",
+					"options": map[string]interface{}{
+						"cacheableOperations": []string{"build", "lint", "test", "e2e"},
+					},
+				},
+			},
+		}
+
+		nxData, err := json.MarshalIndent(nxConfig, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal nx.json: %w", err)
+		}
+
+		err = os.WriteFile(nxJSONPath, nxData, 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write nx.json: %w", err)
+		}
+	}
+
+	// Create basic directory structure
+	dirs := []string{"apps", "libs", "tools"}
+	for _, dir := range dirs {
+		dirPath := filepath.Join(workspacePath, dir)
+		err = os.MkdirAll(dirPath, 0755)
+		if err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+
+		// Create .gitkeep file to ensure directory is tracked by git
+		gitkeepPath := filepath.Join(dirPath, ".gitkeep")
+		err = os.WriteFile(gitkeepPath, []byte(""), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to create .gitkeep in %s: %w", dir, err)
+		}
+	}
+
+	fmt.Printf("✅ Initialized new Nx workspace structure\n")
+	return nil
 }
 
 // Example usage:
