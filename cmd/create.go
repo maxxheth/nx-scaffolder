@@ -110,7 +110,7 @@ func parseInjectInstructions(injectStr string) ([]utils.InjectionInstruction, er
 				return nil, fmt.Errorf("unsupported operator %s in expression %s", operator, part)
 			}
 
-			for j := 0; j < numApps; j++ {
+			for range numApps {
 				instructions = append(instructions, utils.InjectionInstruction{
 					Type:    "create-new",
 					AppName: fmt.Sprintf("app-%d", len(instructions)+1),
