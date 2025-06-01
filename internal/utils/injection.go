@@ -72,6 +72,32 @@ func createNewReactApp(workspacePath, appName string) error {
 		}
 	}
 
+	// Install @nx/react plugin if not already installed
+	nxReactPath := filepath.Join(workspacePath, "node_modules", "@nx", "react")
+	if _, err := os.Stat(nxReactPath); os.IsNotExist(err) {
+		fmt.Println("Installing @nx/react plugin...")
+		installReactCmd := exec.Command("npm", "install", "@nx/react", "--save-dev")
+		installReactCmd.Dir = workspacePath
+		installReactCmd.Stdout = os.Stdout
+		installReactCmd.Stderr = os.Stderr
+
+		if err := installReactCmd.Run(); err != nil {
+			fmt.Printf("Warning: @nx/react installation failed, falling back to manual creation: %v\n", err)
+			return createReactAppManually(workspacePath, appName)
+		}
+	}
+
+	// Check if tsconfig.base.json exists, if not create it
+	tsconfigBasePath := filepath.Join(workspacePath, "tsconfig.base.json")
+	if _, err := os.Stat(tsconfigBasePath); os.IsNotExist(err) {
+		fmt.Println("Creating tsconfig.base.json...")
+		err = createTsConfigBase(workspacePath)
+		if err != nil {
+			fmt.Printf("Warning: failed to create tsconfig.base.json, falling back to manual creation: %v\n", err)
+			return createReactAppManually(workspacePath, appName)
+		}
+	}
+
 	// Use Nx CLI to generate React application
 	cmd := exec.Command("npx", "nx", "generate", "@nx/react:application", appName, "--directory=apps")
 	cmd.Dir = workspacePath
@@ -85,6 +111,33 @@ func createNewReactApp(workspacePath, appName string) error {
 	}
 
 	return nil
+}
+
+// createTsConfigBase creates the base TypeScript configuration file
+func createTsConfigBase(workspacePath string) error {
+	tsconfigBase := `{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "es2015",
+    "module": "esnext",
+    "lib": ["es2020", "dom"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "baseUrl": ".",
+    "paths": {}
+  },
+  "exclude": ["node_modules", "tmp"]
+}`
+
+	tsconfigBasePath := filepath.Join(workspacePath, "tsconfig.base.json")
+	return os.WriteFile(tsconfigBasePath, []byte(tsconfigBase), 0644)
 }
 
 // createReactAppManually creates a basic React app structure when Nx CLI is not available
