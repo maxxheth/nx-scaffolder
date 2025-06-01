@@ -57,6 +57,21 @@ func ProcessInjectionInstructions(ctx context.Context, workspacePath string, ins
 func createNewReactApp(workspacePath, appName string) error {
 	fmt.Printf("Creating new React app: %s\n", appName)
 
+	// Check if node_modules exists, if not install dependencies first
+	nodeModulesPath := filepath.Join(workspacePath, "node_modules")
+	if _, err := os.Stat(nodeModulesPath); os.IsNotExist(err) {
+		fmt.Println("Installing workspace dependencies...")
+		installCmd := exec.Command("npm", "install")
+		installCmd.Dir = workspacePath
+		installCmd.Stdout = os.Stdout
+		installCmd.Stderr = os.Stderr
+
+		if err := installCmd.Run(); err != nil {
+			fmt.Printf("Warning: npm install failed, falling back to manual creation: %v\n", err)
+			return createReactAppManually(workspacePath, appName)
+		}
+	}
+
 	// Use Nx CLI to generate React application
 	cmd := exec.Command("npx", "nx", "generate", "@nx/react:application", appName, "--directory=apps")
 	cmd.Dir = workspacePath
