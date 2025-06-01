@@ -109,7 +109,7 @@ func parseInjectInstructions(injectStr string) ([]utils.InjectionInstruction, er
 		if part == "{create-new}" {
 			instructions = append(instructions, utils.InjectionInstruction{
 				Type:    "create-new",
-				AppName: fmt.Sprintf("app-%d", i+1),
+				AppName: fmt.Sprintf("app-%d", len(instructions)+1),
 			})
 		} else if matches := createNewRegex.FindStringSubmatch(part); matches != nil {
 			operator := matches[1]
@@ -128,10 +128,12 @@ func parseInjectInstructions(injectStr string) ([]utils.InjectionInstruction, er
 				return nil, fmt.Errorf("unsupported operator %s in expression %s", operator, part)
 			}
 
-			for range numApps {
+			// Calculate starting app number before the loop
+			startingAppNum := len(instructions) + 1
+			for j := 0; j < numApps; j++ {
 				instructions = append(instructions, utils.InjectionInstruction{
 					Type:    "create-new",
-					AppName: fmt.Sprintf("app-%d", len(instructions)+1),
+					AppName: fmt.Sprintf("app-%d", startingAppNum+j),
 				})
 			}
 		} else if strings.HasPrefix(part, "http") {
