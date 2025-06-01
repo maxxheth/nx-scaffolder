@@ -27,6 +27,7 @@ var (
 	branch   string
 	template string
 	inject   string
+	output   string // Add this variable
 )
 
 func init() {
@@ -37,26 +38,43 @@ func init() {
 	createCmd.Flags().StringVarP(&branch, "branch", "b", "master", "Git branch to download")
 	createCmd.Flags().StringVarP(&template, "template", "t", "react", "Template type (react, angular, etc.)")
 	createCmd.Flags().StringVarP(&inject, "inject", "i", "", "Pipe-delimited list of repos to inject or {create-new} expressions")
+	createCmd.Flags().StringVarP(&output, "output", "o", ".", "Output directory for the workspace") // Fix this line
 }
 
 func runCreate(cmd *cobra.Command, args []string) error {
 	workspaceName := args[0]
-	outputDir, _ := cmd.Flags().GetString("output")
+	// Use the output variable directly instead of cmd.Flags().GetString("output")
+	outputDir := output
 
 	ctx := context.Background()
-	destPath := filepath.Join(outputDir, workspaceName)
 
-	fmt.Printf("Creating Nx React monorepo '%s'...\n", workspaceName)
+	var destPath string
+	if filepath.IsAbs(workspaceName) {
+		// If workspace name is an absolute path, use it directly
+		destPath = workspaceName
+	} else {
+		// Otherwise, join with output directory
+		destPath = filepath.Join(outputDir, workspaceName)
+	}
+
+	// Convert to absolute path to ensure consistency
+	absDestPath, err := filepath.Abs(destPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve absolute path: %w", err)
+	}
+	destPath = absDestPath
+
+	fmt.Printf("Creating Nx React monorepo at '%s'...\n", destPath)
 
 	// Create base Nx workspace
 	fmt.Printf("Downloading base template from %s/%s (branch: %s)\n", owner, repo, branch)
-	err := utils.FetchNxTemplate(ctx, owner, repo, branch, destPath)
+	err = utils.FetchNxTemplate(ctx, owner, repo, branch, destPath)
 	if err != nil {
 		return fmt.Errorf("failed to download base template: %w", err)
 	}
 
 	// Configure base workspace
-	err = utils.ConfigureMonorepo(destPath, workspaceName)
+	err = utils.ConfigureMonorepo(destPath, filepath.Base(destPath))
 	if err != nil {
 		return fmt.Errorf("failed to configure base workspace: %w", err)
 	}
@@ -74,7 +92,7 @@ func runCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Printf("✅ Successfully created Nx React monorepo '%s'\n", workspaceName)
+	fmt.Printf("✅ Successfully created Nx React monorepo at '%s'\n", destPath)
 	return nil
 }
 
