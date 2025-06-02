@@ -2,6 +2,7 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -208,23 +209,260 @@ func cloneRepo(repoURL, destPath, branch string) error {
 
 // convertToNxProject converts an existing React app to Nx project structure
 func convertToNxProject(appPath, appName string) error {
-	// Create project.json if it doesn't exist
-	projectJSONPath := filepath.Join(appPath, "project.json")
-	if _, err := os.Stat(projectJSONPath); os.IsNotExist(err) {
-		projectJSON := generateProjectJSON(appName)
-		err = os.WriteFile(projectJSONPath, []byte(projectJSON), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to create project.json: %w", err)
-		}
+	// Create project.json for the imported app
+	err := createProjectJsonForImportedApp(appPath, appName)
+	if err != nil {
+		return fmt.Errorf("failed to create project.json: %w", err)
 	}
 
-	// Update package.json to remove scripts that conflict with Nx
+	// Create vite.config.ts for build configuration
+	err = createViteConfigForImportedApp(appPath, appName)
+	if err != nil {
+		return fmt.Errorf("failed to create vite.config.ts: %w", err)
+	}
+
+	// Update package.json to remove conflicting configurations
 	packageJSONPath := filepath.Join(appPath, "package.json")
 	if _, err := os.Stat(packageJSONPath); err == nil {
 		err = updateImportedPackageJSON(packageJSONPath, appName)
 		if err != nil {
 			return fmt.Errorf("failed to update package.json: %w", err)
 		}
+	}
+
+	// Create TypeScript configuration files
+	err = createTsConfigForImportedApp(appPath, appName)
+	if err != nil {
+		return fmt.Errorf("failed to create TypeScript config: %w", err)
+	}
+
+	// Remove conflicting config files
+	filesToRemove := []string{
+		"webpack.config.js",
+		"craco.config.js",
+		".env.local",
+		".env.development.local",
+		".env.production.local",
+	}
+
+	for _, file := range filesToRemove {
+		filePath := filepath.Join(appPath, file)
+		if _, err := os.Stat(filePath); err == nil {
+			os.Remove(filePath)
+		}
+	}
+
+	return nil
+}
+
+// createTsConfigForImportedApp creates TypeScript configuration for imported apps
+func createTsConfigForImportedApp(appPath, appName string) error {
+	fmt.Printf("Generating TypeScript configuration for app: %s\n", appName)
+	// Main tsconfig.json
+	tsConfig := `{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "files": [],
+  "include": [],
+  "references": [
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.spec.json"
+    }
+  ]
+}`
+
+	// App-specific tsconfig
+	tsConfigApp := `{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+	"outDir": "../../dist/out-tsc",
+	"types": ["node", "vite/client"]
+  },
+  "files": [
+	"../../node_modules/@nx/react/typings/cssmodule.d.ts",
+	"../../node_modules/@nx/react/typings/image.d.ts",
+	"vite-env.d.ts"
+  ],
+  "exclude": [
+	"**/*.spec.ts",
+	"**/*.test.ts",
+	"**/*.spec.tsx",
+	"**/*.test.tsx",
+	"**/*.spec.js",
+	"**/*.test.js",
+	"**/*.spec.jsx",
+	"**/*.test.jsx"
+  ],
+  "include": ["src/**/*"]
+}`
+
+	// Test-specific tsconfig
+	tsConfigSpec := `{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../../dist/out-tsc",
+    "types": ["vitest/globals", "vitest/importMeta", "vite/client", "node"]
+  },
+  "include": [
+    "vite.config.ts",
+    "src/**/*.test.ts",
+    "src/**/*.spec.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.tsx",
+    "src/**/*.test.js",
+    "src/**/*.spec.js",
+    "src/**/*.test.jsx",
+    "src/**/*.spec.jsx"
+  ]
+}`
+
+	// Write config files
+	configs := map[string]string{
+		"tsconfig.json":      tsConfig,
+		"tsconfig.app.json":  tsConfigApp,
+		"tsconfig.spec.json": tsConfigSpec,
+	}
+
+	for filename, content := range configs {
+		configPath := filepath.Join(appPath, filename)
+		err := os.WriteFile(configPath, []byte(content), 0644)
+		if err != nil {
+			return fmt.Errorf("failed to write %s: %w", filename, err)
+		}
+	}
+
+	// Create vite-env.d.ts
+	viteEnv := `/// <reference types="vite/client" />`
+	viteEnvPath := filepath.Join(appPath, "vite-env.d.ts")
+	return os.WriteFile(viteEnvPath, []byte(viteEnv), 0644)
+}
+
+// createViteConfigForImportedApp creates a Vite config for imported apps
+func createViteConfigForImportedApp(appPath, appName string) error {
+	viteConfig := fmt.Sprintf(`/// <reference types='vitest' />
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { nxViteTsPaths } from '@nx/vite/plugins/nx-tsconfig-paths.plugin';
+import { nxCopyAssetsPlugin } from '@nx/vite/plugins/nx-copy-assets.plugin';
+
+export default defineConfig(() => ({
+  root: __dirname,
+  cacheDir: './node_modules/.vite/%s',
+  server: {
+    port: 4200,
+    host: 'localhost',
+  },
+  preview: {
+    port: 4300,
+    host: 'localhost',
+  },
+  plugins: [react(), nxViteTsPaths(), nxCopyAssetsPlugin(['*.md'])],
+  // Uncomment this if you are using workers.
+  // worker: {
+  //  plugins: [ nxViteTsPaths() ],
+  // },
+  build: {
+    outDir: './dist/%s',
+    emptyOutDir: true,
+    reportCompressedSize: true,
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
+  },
+  test: {
+    watch: false,
+    globals: true,
+    environment: 'jsdom',
+    include: ['{src,tests}/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
+    reporters: ['default'],
+    coverage: {
+      reportsDirectory: './coverage/%s',
+      provider: 'v8' as const,
+    },
+  },
+}));
+`, appName, appName, appName)
+
+	viteConfigPath := filepath.Join(appPath, "vite.config.ts")
+	return os.WriteFile(viteConfigPath, []byte(viteConfig), 0644)
+}
+
+// createProjectJsonForImportedApp creates a proper project.json for imported React apps
+func createProjectJsonForImportedApp(appPath, appName string) error {
+	projectJSON := map[string]interface{}{
+		"name":        appName,
+		"$schema":     "../../node_modules/nx/schemas/project-schema.json",
+		"projectType": "application",
+		"sourceRoot":  fmt.Sprintf("apps/%s/src", appName),
+		"targets": map[string]interface{}{
+			"build": map[string]interface{}{
+				"executor": "@nx/vite:build",
+				"outputs":  []string{"{options.outputPath}"},
+				"options": map[string]interface{}{
+					"outputPath": fmt.Sprintf("dist/apps/%s", appName),
+				},
+			},
+			"serve": map[string]interface{}{
+				"executor": "@nx/vite:dev-server",
+				"options": map[string]interface{}{
+					"buildTarget": fmt.Sprintf("%s:build", appName),
+					"hmr":         true,
+				},
+				"configurations": map[string]interface{}{
+					"development": map[string]interface{}{
+						"buildTarget": fmt.Sprintf("%s:build:development", appName),
+						"hmr":         true,
+					},
+				},
+			},
+			"preview": map[string]interface{}{
+				"executor": "@nx/vite:preview-server",
+				"options": map[string]interface{}{
+					"buildTarget": fmt.Sprintf("%s:build", appName),
+				},
+			},
+			"test": map[string]interface{}{
+				"executor": "@nx/vite:test",
+				"outputs":  []string{"{options.reportsDirectory}"},
+				"options": map[string]interface{}{
+					"passWithNoTests":  true,
+					"reportsDirectory": fmt.Sprintf("../../coverage/apps/%s", appName),
+				},
+			},
+			"lint": map[string]interface{}{
+				"executor": "@nx/eslint:lint",
+				"outputs":  []string{"{options.outputFile}"},
+				"options": map[string]interface{}{
+					"lintFilePatterns": []string{fmt.Sprintf("apps/%s/**/*.{ts,tsx,js,jsx}", appName)},
+				},
+			},
+		},
+		"tags": []string{},
+	}
+
+	projectJSONPath := filepath.Join(appPath, "project.json")
+	data, err := json.MarshalIndent(projectJSON, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal project.json: %w", err)
+	}
+
+	err = os.WriteFile(projectJSONPath, data, 0644)
+	if err != nil {
+		return fmt.Errorf("failed to write project.json: %w", err)
 	}
 
 	return nil
@@ -481,4 +719,49 @@ export default defineConfig({
     },
   },
 });`, appName, appName, appName)
+}
+
+// updateRootPackageJSON updates the root package.json with workspace information
+func updateRootPackageJSON(packageJSONPath string, instructions []InjectionInstruction) error {
+	data, err := os.ReadFile(packageJSONPath)
+	if err != nil {
+		return err
+	}
+
+	var packageJSON map[string]interface{}
+	err = json.Unmarshal(data, &packageJSON)
+	if err != nil {
+		return err
+	}
+
+	// Ensure scripts section exists
+	if _, exists := packageJSON["scripts"]; !exists {
+		packageJSON["scripts"] = make(map[string]interface{})
+	}
+
+	scripts := packageJSON["scripts"].(map[string]interface{})
+
+	// Add useful workspace scripts
+	scripts["build"] = "nx build"
+	scripts["test"] = "nx test"
+	scripts["lint"] = "nx lint"
+	scripts["serve"] = "nx serve"
+	scripts["graph"] = "nx graph"
+
+	// Add app-specific scripts for each instruction
+	for _, instruction := range instructions {
+		appName := instruction.AppName
+		scripts[fmt.Sprintf("build:%s", appName)] = fmt.Sprintf("nx build %s", appName)
+		scripts[fmt.Sprintf("serve:%s", appName)] = fmt.Sprintf("nx serve %s", appName)
+		scripts[fmt.Sprintf("test:%s", appName)] = fmt.Sprintf("nx test %s", appName)
+		scripts[fmt.Sprintf("lint:%s", appName)] = fmt.Sprintf("nx lint %s", appName)
+	}
+
+	// Write back to file
+	updatedData, err := json.MarshalIndent(packageJSON, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(packageJSONPath, updatedData, 0644)
 }
