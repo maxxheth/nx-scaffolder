@@ -437,12 +437,6 @@ func ConfigureMonorepo(workspacePath, workspaceName string) error {
 
 // updateNxJSONForMonorepo updates nx.json for monorepo configuration
 func updateNxJSONForMonorepo(nxJSONPath string, instructions []InjectionInstruction) error {
-	for _, instruction := range instructions {
-		// Log instruction details
-
-		fmt.Printf("Processing instruction: Type=%s, AppName=%s", instruction.Type, instruction.AppName)
-	}
-
 	data, err := os.ReadFile(nxJSONPath)
 	if err != nil {
 		return err
@@ -454,40 +448,86 @@ func updateNxJSONForMonorepo(nxJSONPath string, instructions []InjectionInstruct
 		return err
 	}
 
-	// Configure for monorepo
-	nxConfig["npmScope"] = "monorepo"
-	nxConfig["affected"] = map[string]interface{}{
-		"defaultBase": "origin/main",
+	// Update schema to latest
+	nxConfig["$schema"] = "./node_modules/nx/schemas/nx-schema.json"
+
+	// Configure named inputs for modern Nx
+	nxConfig["namedInputs"] = map[string]interface{}{
+		"default": []interface{}{"{projectRoot}/**/*", "sharedGlobals"},
+		"production": []interface{}{
+			"default",
+			"!{projectRoot}/.eslintrc.json",
+			"!{projectRoot}/eslint.config.mjs",
+			"!{projectRoot}/**/?(*.)+(spec|test).[jt]s?(x)?(.snap)",
+			"!{projectRoot}/tsconfig.spec.json",
+			"!{projectRoot}/src/test-setup.[jt]s",
+		},
+		"sharedGlobals": []interface{}{},
 	}
 
-	// Ensure React plugin is included
-	if nxConfig["plugins"] == nil {
-		nxConfig["plugins"] = []interface{}{}
-	}
-
-	plugins := nxConfig["plugins"].([]interface{})
-	hasReactPlugin := false
-	for _, plugin := range plugins {
-		if pluginStr, ok := plugin.(string); ok && strings.Contains(pluginStr, "react") {
-			hasReactPlugin = true
-			break
-		}
-	}
-
-	if !hasReactPlugin {
-		nxConfig["plugins"] = append(plugins, "@nx/react/plugin")
-	}
-
-	// Configure task runners
-	if nxConfig["tasksRunnerOptions"] == nil {
-		nxConfig["tasksRunnerOptions"] = map[string]interface{}{
-			"default": map[string]interface{}{
-				"runner": "@nx/workspace/tasks-runners/default",
-				"options": map[string]interface{}{
-					"cacheableOperations": []string{"build", "lint", "test", "e2e"},
-				},
+	// Configure modern plugin-based system
+	nxConfig["plugins"] = []interface{}{
+		map[string]interface{}{
+			"plugin": "@nx/react/router-plugin",
+			"options": map[string]interface{}{
+				"buildTargetName":     "build",
+				"devTargetName":       "dev",
+				"startTargetName":     "start",
+				"watchDepsTargetName": "watch-deps",
+				"buildDepsTargetName": "build-deps",
+				"typecheckTargetName": "typecheck",
 			},
-		}
+		},
+		map[string]interface{}{
+			"plugin": "@nx/eslint/plugin",
+			"options": map[string]interface{}{
+				"targetName": "lint",
+			},
+		},
+		map[string]interface{}{
+			"plugin": "@nx/vite/plugin",
+			"options": map[string]interface{}{
+				"buildTargetName":       "build",
+				"testTargetName":        "test",
+				"serveTargetName":       "serve",
+				"devTargetName":         "dev",
+				"previewTargetName":     "preview",
+				"serveStaticTargetName": "serve-static",
+				"typecheckTargetName":   "typecheck",
+				"buildDepsTargetName":   "build-deps",
+				"watchDepsTargetName":   "watch-deps",
+			},
+		},
+		map[string]interface{}{
+			"plugin": "@nx/playwright/plugin",
+			"options": map[string]interface{}{
+				"targetName": "e2e",
+			},
+		},
+	}
+
+	// Set default project to the first app if we have instructions
+	if len(instructions) > 0 {
+		nxConfig["defaultProject"] = instructions[0].AppName
+	}
+
+	// Configure generators for React with modern defaults
+	nxConfig["generators"] = map[string]interface{}{
+		"@nx/react": map[string]interface{}{
+			"application": map[string]interface{}{
+				"babel":   true,
+				"style":   "css",
+				"linter":  "eslint",
+				"bundler": "vite",
+			},
+			"component": map[string]interface{}{
+				"style": "css",
+			},
+			"library": map[string]interface{}{
+				"style":  "css",
+				"linter": "eslint",
+			},
+		},
 	}
 
 	// Write back to file
@@ -499,51 +539,49 @@ func updateNxJSONForMonorepo(nxJSONPath string, instructions []InjectionInstruct
 	return os.WriteFile(nxJSONPath, updatedData, 0644)
 }
 
-// updateRootPackageJSON updates the root package.json for the monorepo
-func updateRootPackageJSON(packageJSONPath string, instructions []InjectionInstruction) error {
-	data, err := os.ReadFile(packageJSONPath)
-	if err != nil {
-		return err
-	}
+// createEslintConfigForImportedApp creates modern ESLint config for imported apps
+func createEslintConfigForImportedApp(appPath, appName string) error {
+	// Print the app name for debugging
 
-	var packageJSON map[string]interface{}
-	err = json.Unmarshal(data, &packageJSON)
-	if err != nil {
-		return err
-	}
+	fmt.Printf("Creating ESLint config for imported app: %s\n", appName)
+	eslintConfig := `import nx from '@nx/eslint-plugin';
 
-	// Add scripts for all apps
-	if packageJSON["scripts"] == nil {
-		packageJSON["scripts"] = make(map[string]interface{})
-	}
+export default [
+  ...nx.configs['flat/base'],
+  ...nx.configs['flat/typescript'],
+  ...nx.configs['flat/javascript'],
+  {
+    ignores: [
+      '**/dist',
+      '**/vite.config.*.timestamp*',
+      '**/vitest.config.*.timestamp*',
+    ],
+  },
+  {
+    files: [
+      '**/*.ts',
+      '**/*.tsx',
+      '**/*.cts',
+      '**/*.mts',
+      '**/*.js',
+      '**/*.jsx',
+      '**/*.cjs',
+      '**/*.mjs',
+    ],
+    // Override or add rules here
+    rules: {},
+  },
+  ...nx.configs['flat/react'],
+  {
+    files: ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx'],
+    // Override or add rules here
+    rules: {},
+  },
+];
+`
 
-	scripts := packageJSON["scripts"].(map[string]interface{})
-
-	// Add common scripts
-	scripts["start"] = "nx serve"
-	scripts["build"] = "nx build"
-	scripts["test"] = "nx test"
-	scripts["lint"] = "nx lint"
-	scripts["affected:apps"] = "nx affected:apps"
-	scripts["affected:libs"] = "nx affected:libs"
-	scripts["affected:build"] = "nx affected:build"
-	scripts["affected:test"] = "nx affected:test"
-
-	// Add app-specific scripts
-	for _, instruction := range instructions {
-		appName := instruction.AppName
-		scripts[fmt.Sprintf("start:%s", appName)] = fmt.Sprintf("nx serve %s", appName)
-		scripts[fmt.Sprintf("build:%s", appName)] = fmt.Sprintf("nx build %s", appName)
-		scripts[fmt.Sprintf("test:%s", appName)] = fmt.Sprintf("nx test %s", appName)
-	}
-
-	// Write back to file
-	updatedData, err := json.MarshalIndent(packageJSON, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(packageJSONPath, updatedData, 0644)
+	eslintConfigPath := filepath.Join(appPath, "eslint.config.mjs")
+	return os.WriteFile(eslintConfigPath, []byte(eslintConfig), 0644)
 }
 
 // updateImportedPackageJSON updates package.json for imported apps
@@ -559,19 +597,63 @@ func updateImportedPackageJSON(packageJSONPath, appName string) error {
 		return err
 	}
 
-	// Update name
+	// Update name to match Nx app naming convention
 	packageJSON["name"] = appName
 
-	// Remove conflicting scripts
+	// Set private to true for monorepo apps
+	packageJSON["private"] = true
+
+	// Remove conflicting scripts that Nx will handle
 	if scripts, exists := packageJSON["scripts"]; exists {
 		if scriptsMap, ok := scripts.(map[string]interface{}); ok {
-			// Remove scripts that might conflict with Nx
+			// Remove scripts that conflict with Nx plugins
 			delete(scriptsMap, "start")
 			delete(scriptsMap, "build")
 			delete(scriptsMap, "test")
+			delete(scriptsMap, "dev")
+			delete(scriptsMap, "serve")
+			delete(scriptsMap, "lint")
 			delete(scriptsMap, "eject")
+			delete(scriptsMap, "preview")
 		}
 	}
+
+	// Remove dependencies that will be managed at workspace level
+	if deps, exists := packageJSON["dependencies"]; exists {
+		if depsMap, ok := deps.(map[string]interface{}); ok {
+			// Keep React-specific dependencies but remove build tools
+			buildTools := []string{
+				"react-scripts",
+				"@vitejs/plugin-react",
+				"vite",
+				"webpack",
+				"eslint",
+				"@eslint",
+				"prettier",
+				"@types/node",
+				"typescript",
+				"vitest",
+				"@testing-library",
+			}
+
+			for _, tool := range buildTools {
+				for dep := range depsMap {
+					if strings.Contains(dep, tool) {
+						delete(depsMap, dep)
+					}
+				}
+			}
+		}
+	}
+
+	// Remove devDependencies as they'll be managed by the workspace
+	delete(packageJSON, "devDependencies")
+
+	// Remove build-related configurations
+	delete(packageJSON, "eslintConfig")
+	delete(packageJSON, "browserslist")
+	delete(packageJSON, "homepage")
+	delete(packageJSON, "type")
 
 	// Write back to file
 	updatedData, err := json.MarshalIndent(packageJSON, "", "  ")
@@ -584,7 +666,7 @@ func updateImportedPackageJSON(packageJSONPath, appName string) error {
 
 // initializeNodeProject creates a basic package.json file for the workspace
 func initializeNodeProject(workspacePath, workspaceName string) error {
-	// Create a basic package.json structure
+	// Create a basic package.json structure with modern Nx dependencies
 	packageJSON := map[string]interface{}{
 		"name":    workspaceName,
 		"version": "0.0.0",
@@ -592,8 +674,18 @@ func initializeNodeProject(workspacePath, workspaceName string) error {
 		"scripts": map[string]interface{}{},
 		"private": true,
 		"devDependencies": map[string]interface{}{
-			"nx":            "latest",
-			"@nx/workspace": "latest",
+			"nx":                   "latest",
+			"@nx/workspace":        "latest",
+			"@nx/react":            "latest",
+			"@nx/vite":             "latest",
+			"@nx/eslint":           "latest",
+			"@nx/playwright":       "latest",
+			"@vitejs/plugin-react": "latest",
+			"vite":                 "latest",
+			"vitest":               "latest",
+			"eslint":               "latest",
+			"@nx/eslint-plugin":    "latest",
+			"typescript":           "latest",
 		},
 		"workspaces": []string{
 			"apps/*",
@@ -613,36 +705,21 @@ func initializeNodeProject(workspacePath, workspaceName string) error {
 		return fmt.Errorf("failed to write package.json: %w", err)
 	}
 
-	// Create nx.json if it doesn't exist
+	// Create modern nx.json if it doesn't exist
 	nxJSONPath := filepath.Join(workspacePath, "nx.json")
 	if _, err := os.Stat(nxJSONPath); os.IsNotExist(err) {
-		nxConfig := map[string]interface{}{
-			"$schema":  "./node_modules/nx/schemas/nx-schema.json",
-			"npmScope": workspaceName,
-			"affected": map[string]interface{}{
-				"defaultBase": "origin/main",
-			},
-			"plugins": []interface{}{
-				"@nx/react/plugin",
-			},
-			"tasksRunnerOptions": map[string]interface{}{
-				"default": map[string]interface{}{
-					"runner": "@nx/workspace/tasks-runners/default",
-					"options": map[string]interface{}{
-						"cacheableOperations": []string{"build", "lint", "test", "e2e"},
-					},
-				},
-			},
-		}
-
-		nxData, err := json.MarshalIndent(nxConfig, "", "  ")
+		err = updateNxJSONForMonorepo(nxJSONPath, []InjectionInstruction{})
 		if err != nil {
-			return fmt.Errorf("failed to marshal nx.json: %w", err)
+			return fmt.Errorf("failed to create nx.json: %w", err)
 		}
+	}
 
-		err = os.WriteFile(nxJSONPath, nxData, 0644)
+	// Create modern eslint.config.mjs at workspace root
+	eslintConfigPath := filepath.Join(workspacePath, "eslint.config.mjs")
+	if _, err := os.Stat(eslintConfigPath); os.IsNotExist(err) {
+		err = createEslintConfigForImportedApp(workspacePath, workspaceName)
 		if err != nil {
-			return fmt.Errorf("failed to write nx.json: %w", err)
+			return fmt.Errorf("failed to create eslint.config.mjs: %w", err)
 		}
 	}
 
@@ -663,16 +740,6 @@ func initializeNodeProject(workspacePath, workspaceName string) error {
 		}
 	}
 
-	fmt.Printf("✅ Initialized new Nx workspace structure\n")
+	fmt.Printf("✅ Initialized new Nx workspace structure with modern plugin configuration\n")
 	return nil
 }
-
-// Example usage:
-// func main() {
-// 	ctx := context.Background()
-// 	err := FetchGitHubRepo(ctx, "owner", "repo", "path/to/file.txt")
-// 	if err != nil {
-// 		fmt.Printf("Error fetching GitHub repo: %v\n", err)
-// 	} else {
-// 		fmt.Println("File fetched and written successfully.")
-// 	}
