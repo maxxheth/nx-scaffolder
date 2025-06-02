@@ -55,62 +55,43 @@ func ProcessInjectionInstructions(ctx context.Context, workspacePath string, ins
 
 // createNewReactApp creates a new React application in the monorepo
 func createNewReactApp(workspacePath, appName string) error {
-	fmt.Printf("Creating new React app: %s\n", appName)
+	fmt.Printf("Creating new React app with Vite: %s\n", appName)
 
-	// Check if node_modules exists, if not install dependencies first
-	nodeModulesPath := filepath.Join(workspacePath, "node_modules")
-	if _, err := os.Stat(nodeModulesPath); os.IsNotExist(err) {
-		fmt.Println("Installing workspace dependencies...")
-		installCmd := exec.Command("npm", "install")
-		installCmd.Dir = workspacePath
-		installCmd.Stdout = os.Stdout
-		installCmd.Stderr = os.Stderr
+	// Create the app directory path
+	// appPath := filepath.Join(workspacePath, "apps", appName)
 
-		if err := installCmd.Run(); err != nil {
-			fmt.Printf("Warning: npm install failed, falling back to manual creation: %v\n", err)
-			return createReactAppManually(workspacePath, appName)
-		}
+	// Ensure the apps directory exists
+	appsDir := filepath.Join(workspacePath, "apps")
+	err := os.MkdirAll(appsDir, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create apps directory: %w", err)
 	}
 
-	// Install @nx/react plugin if not already installed
-	nxReactPath := filepath.Join(workspacePath, "node_modules", "@nx", "react")
-	if _, err := os.Stat(nxReactPath); os.IsNotExist(err) {
-		fmt.Println("Installing @nx/react plugin...")
-		installReactCmd := exec.Command("npm", "install", "@nx/react", "--save-dev")
-		installReactCmd.Dir = workspacePath
-		installReactCmd.Stdout = os.Stdout
-		installReactCmd.Stderr = os.Stderr
-
-		if err := installReactCmd.Run(); err != nil {
-			fmt.Printf("Warning: @nx/react installation failed, falling back to manual creation: %v\n", err)
-			return createReactAppManually(workspacePath, appName)
-		}
-	}
-
-	// Check if tsconfig.base.json exists, if not create it
-	tsconfigBasePath := filepath.Join(workspacePath, "tsconfig.base.json")
-	if _, err := os.Stat(tsconfigBasePath); os.IsNotExist(err) {
-		fmt.Println("Creating tsconfig.base.json...")
-		err = createTsConfigBase(workspacePath)
-		if err != nil {
-			fmt.Printf("Warning: failed to create tsconfig.base.json, falling back to manual creation: %v\n", err)
-			return createReactAppManually(workspacePath, appName)
-		}
-	}
-
-	// Use Nx CLI to generate React application
-	cmd := exec.Command("npx", "nx", "generate", "@nx/react:application", appName, "--directory=apps")
-	cmd.Dir = workspacePath
+	// Use create-nx-workspace to generate a standalone React app with Vite
+	cmd := exec.Command("npx", "create-nx-workspace@latest", appName,
+		"--preset=react-standalone",
+		"--bundler=vite",
+		"--interactive=false")
+	cmd.Dir = appsDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
-		// Fallback: create basic React app structure manually
+		fmt.Printf("Nx workspace creation failed, falling back to manual creation: %v\n", err)
 		return createReactAppManually(workspacePath, appName)
 	}
 
-	return nil
+	// Move the generated workspace into the apps directory structure
+	generatedPath := filepath.Join(appsDir, appName)
+	if _, err := os.Stat(generatedPath); err == nil {
+		// The workspace was created successfully
+		fmt.Printf("✅ Successfully created React app with Vite: %s\n", appName)
+		return nil
+	}
+
+	// If something went wrong, fall back to manual creation
+	return createReactAppManually(workspacePath, appName)
 }
 
 // createTsConfigBase creates the base TypeScript configuration file
