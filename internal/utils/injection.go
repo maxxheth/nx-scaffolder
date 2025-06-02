@@ -95,31 +95,31 @@ func createNewReactApp(workspacePath, appName string) error {
 }
 
 // createTsConfigBase creates the base TypeScript configuration file
-func createTsConfigBase(workspacePath string) error {
-	tsconfigBase := `{
-  "compileOnSave": false,
-  "compilerOptions": {
-    "rootDir": ".",
-    "sourceMap": true,
-    "declaration": false,
-    "moduleResolution": "node",
-    "emitDecoratorMetadata": true,
-    "experimentalDecorators": true,
-    "importHelpers": true,
-    "target": "es2015",
-    "module": "esnext",
-    "lib": ["es2020", "dom"],
-    "skipLibCheck": true,
-    "skipDefaultLibCheck": true,
-    "baseUrl": ".",
-    "paths": {}
-  },
-  "exclude": ["node_modules", "tmp"]
-}`
+// func createTsConfigBase(workspacePath string) error {
+// 	tsconfigBase := `{
+//   "compileOnSave": false,
+//   "compilerOptions": {
+//     "rootDir": ".",
+//     "sourceMap": true,
+//     "declaration": false,
+//     "moduleResolution": "node",
+//     "emitDecoratorMetadata": true,
+//     "experimentalDecorators": true,
+//     "importHelpers": true,
+//     "target": "es2015",
+//     "module": "esnext",
+//     "lib": ["es2020", "dom"],
+//     "skipLibCheck": true,
+//     "skipDefaultLibCheck": true,
+//     "baseUrl": ".",
+//     "paths": {}
+//   },
+//   "exclude": ["node_modules", "tmp"]
+// }`
 
-	tsconfigBasePath := filepath.Join(workspacePath, "tsconfig.base.json")
-	return os.WriteFile(tsconfigBasePath, []byte(tsconfigBase), 0644)
-}
+// 	tsconfigBasePath := filepath.Join(workspacePath, "tsconfig.base.json")
+// 	return os.WriteFile(tsconfigBasePath, []byte(tsconfigBase), 0644)
+// }
 
 // createReactAppManually creates a basic React app structure when Nx CLI is not available
 func createReactAppManually(workspacePath, appName string) error {
